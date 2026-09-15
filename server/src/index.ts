@@ -32,7 +32,7 @@ app.use('/api', exportRouter);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'No such endpoint' }));
 
 // Serve the built front end when it exists, so `npm start` runs the whole app.
-const webDist = path.resolve(process.cwd(), 'web/dist');
+const webDist = config.webDist;
 if (fs.existsSync(webDist)) {
   app.use(express.static(webDist));
   app.get(/.*/, (_req, res) => res.sendFile(path.join(webDist, 'index.html')));
