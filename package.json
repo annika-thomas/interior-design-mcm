@@ -1,0 +1,19 @@
+{
+  "name": "interior-design-mcm",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Survey your apartment from photos, build an editable 3D model, and plan it in mid-century modern style from your own saved inspiration.",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": { "node": ">=20" }
+}
