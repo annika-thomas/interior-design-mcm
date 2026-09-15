@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Furniture, LibraryItem, Opening, Photo, Room, Suggestion } from '../types.js';
 import { CATALOG_BY_KEY, CATALOG_BY_ROLE, type CatalogItem, fitForRole } from './catalog.js';
 import { PALETTES, ROOM_PROGRAMS } from './knowledge.js';
-import { areaSqm, centroid, findSpot } from './geometry.js';
+import { areaSqm, centroid, findSpot, frontDirection } from './geometry.js';
 import { evaluateRoom } from './rules.js';
 
 export interface SuggestInput {
@@ -56,11 +56,41 @@ function anchorFor(role: string, furniture: Furniture[]): Furniture | undefined 
   return undefined;
 }
 
+/** Roles whose tops can hold a lamp or a group of ceramics. */
+const SUPPORT_ROLES = ['side-table', 'nightstand', 'credenza', 'console', 'coffee-table', 'bookshelf', 'desk'];
+
+/** The tallest clear surface in the room, if there is one. */
+function supportSurface(furniture: Furniture[]): Furniture | undefined {
+  return furniture
+    .filter((f) => {
+      const role = f.catalogKey ? CATALOG_BY_KEY[f.catalogKey]?.role : null;
+      return role != null && SUPPORT_ROLES.includes(role) && f.z < 60;
+    })
+    .sort((a, b) => b.heightCm - a.heightCm)[0];
+}
+
 function placementFor(
   item: CatalogItem,
   room: Room,
   furniture: Furniture[],
 ): Suggestion['placement'] {
+  // A table lamp belongs on a table. Dropping it on the floor is the kind of
+  // detail that makes an otherwise sound plan read as machine-generated.
+  if (item.role === 'table-lamp' || item.role === 'ceramics' || item.role === 'task-lamp') {
+    const surface = supportSurface(furniture);
+    if (surface) {
+      // Sit it toward the back of the surface so it does not overhang.
+      const back = Math.max(0, surface.depthCm / 2 - item.dims.d / 2 - 4);
+      const dir = frontDirection(surface.rotationDeg);
+      return {
+        x: surface.x - dir.x * back,
+        y: surface.y - dir.y * back,
+        z: surface.heightCm,
+        rotationDeg: surface.rotationDeg,
+      };
+    }
+  }
+
   if (CEILING_ROLES.has(item.role)) {
     const anchor = anchorFor('dining-chair', furniture) ??
       furniture.find((f) => (f.catalogKey ? CATALOG_BY_KEY[f.catalogKey]?.role : null) === 'dining-table');
@@ -70,10 +100,18 @@ function placementFor(
     return { x: c.x, y: c.y, z, rotationDeg: 0 };
   }
   if (WALL_ROLES.has(item.role)) {
-    const spot = findSpot(room, furniture, { w: item.dims.w, d: 10 }, 'against-wall');
-    const z = item.role === 'curtains' ? room.heightCm - item.dims.h : 145 - item.dims.h / 2;
+    // Flush to the wall, and free to hang above whatever is already standing
+    // against it — a canvas over a credenza is the point, not a collision.
+    const spot = findSpot(
+      room, furniture, { w: item.dims.w, d: item.dims.d }, 'against-wall', undefined,
+      { wallGapCm: 1, ignoreCollisions: true },
+    );
     if (!spot) return null;
-    return { x: spot.x, y: spot.y, z: Math.max(0, z), rotationDeg: spot.rotationDeg };
+    // Curtains run from the ceiling; art centres at the 145 cm the rule wants.
+    const z = item.role === 'curtains'
+      ? Math.max(0, room.heightCm - item.dims.h)
+      : Math.max(0, 145 - item.dims.h / 2);
+    return { x: spot.x, y: spot.y, z, rotationDeg: spot.rotationDeg };
   }
   const style = PLACEMENT_FOR_ROLE[item.role] ?? 'anywhere';
   const anchor = anchorFor(item.role, furniture);

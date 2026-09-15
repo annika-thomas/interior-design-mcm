@@ -14,6 +14,31 @@ export interface Wall {
   compass: 'north' | 'east' | 'south' | 'west';
 }
 
+/**
+ * Facing convention, used by the plan view, the 3D view and the placement
+ * engine alike.
+ *
+ *   Plan space is (x right, y down) in centimetres. A piece at rotation 0
+ *   FACES +y. Its front direction at rotation `a` is therefore
+ *   (-sin a, cos a), and its back sits opposite.
+ *
+ *   The 3D scene maps plan-y onto world +z and applies `rotation.y = -a`,
+ *   which sends the model's local +z (the side the builders put the seat on)
+ *   onto that same front direction.
+ *
+ * Getting these two out of step is what makes sofas face their own walls, so
+ * every place that computes a facing derives it from this comment.
+ */
+export function frontDirection(rotationDeg: number): Point {
+  const rad = (rotationDeg * Math.PI) / 180;
+  return { x: -Math.sin(rad), y: Math.cos(rad) };
+}
+
+/** The rotation that makes a piece face along `dir`. */
+export function rotationFacing(dir: Point): number {
+  return normalizeAngle((Math.atan2(-dir.x, dir.y) * 180) / Math.PI);
+}
+
 export function polygonArea(poly: Point[]): number {
   let sum = 0;
   for (let i = 0; i < poly.length; i++) {
@@ -235,6 +260,14 @@ export function circulation(room: Room, furniture: Furniture[], step = 15) {
   };
 }
 
+export interface SpotOptions {
+  /** Gap between the piece and the wall behind it. Defaults to the period's
+   *  15 cm float; wall-hung pieces pass a near-zero value to sit flush. */
+  wallGapCm?: number;
+  /** Skip collision checks — for pieces that hang above the floor entirely. */
+  ignoreCollisions?: boolean;
+}
+
 /** Find an unoccupied spot for a new piece, preferring its declared placement style. */
 export function findSpot(
   room: Room,
@@ -242,9 +275,10 @@ export function findSpot(
   size: { w: number; d: number },
   style: 'against-wall' | 'corner' | 'floating' | 'in-front-of-seat' | 'beside-seat' | 'under-group' | 'anywhere',
   anchor?: Furniture,
+  options: SpotOptions = {},
 ): { x: number; y: number; rotationDeg: number } | null {
   const ws = walls(room.polygon);
-  const taken = existing.filter((f) => f.z < 60).map((f) => footprint(f));
+  const taken = options.ignoreCollisions ? [] : existing.filter((f) => f.z < 60).map((f) => footprint(f));
   const fits = (x: number, y: number, rot: number) => {
     const fp = footprint({ x, y, rotationDeg: rot, widthCm: size.w, depthCm: size.d });
     if (!fp.every((c) => pointInPolygon(c, room.polygon))) return false;
@@ -253,8 +287,7 @@ export function findSpot(
 
   if (anchor && (style === 'in-front-of-seat' || style === 'beside-seat')) {
     const rad = (anchor.rotationDeg * Math.PI) / 180;
-    // Anchor's local +z (front) direction in plan coordinates.
-    const front = { x: Math.sin(rad), y: -Math.cos(rad) };
+    const front = frontDirection(anchor.rotationDeg);
     const side = { x: Math.cos(rad), y: Math.sin(rad) };
     const dir = style === 'in-front-of-seat' ? front : side;
     for (const sign of style === 'beside-seat' ? [1, -1] : [1]) {
@@ -292,7 +325,7 @@ export function findSpot(
     : ws.slice().sort((a, b) => b.lengthCm - a.lengthCm);
 
   for (const w of ordered) {
-    const rot = normalizeAngle(-(Math.atan2(w.inward.y, w.inward.x) * 180) / Math.PI - 90);
+    const rot = rotationFacing(w.inward);
     const steps = Math.max(1, Math.floor((w.lengthCm - size.w) / 20));
     const order = style === 'corner'
       ? [0, steps]
@@ -303,9 +336,10 @@ export function findSpot(
       if (t > 1) continue;
       const px = w.a.x + (w.b.x - w.a.x) * t;
       const py = w.a.y + (w.b.y - w.a.y) * t;
-      // Pull off the wall by half the depth plus a 15 cm float, so the piece
+      // Pull off the wall by half the depth plus a float, so a floor piece
       // satisfies the "float the seating group" rule rather than sitting flush.
-      const off = size.d / 2 + 15;
+      // Wall-hung pieces override the gap to near zero.
+      const off = size.d / 2 + (options.wallGapCm ?? 15);
       const x = px + w.inward.x * off;
       const y = py + w.inward.y * off;
       if (fits(x, y, rot)) return { x, y, rotationDeg: rot };
