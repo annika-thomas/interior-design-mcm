@@ -385,3 +385,36 @@ input[type='range'] { width: 100%; accent-color: var(--walnut); }
 @media (max-width: 900px) {
   .time-control { position: static; width: auto; margin: 10px; }
 }
+
+/* --- On-screen movement stick (touch only) ------------------------------ */
+
+.touch-stick {
+  position: absolute; left: 22px; bottom: 22px; z-index: 7;
+  width: 124px; height: 124px; border-radius: 50%;
+  background: rgba(20, 18, 16, .28);
+  border: 1.5px solid rgba(255, 255, 255, .34);
+  backdrop-filter: blur(3px);
+  display: grid; place-items: center;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.touch-stick-knob {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(251, 249, 244, .82);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .3);
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  /* Give the model room to breathe on a phone; the panel is secondary. */
+  .split .pane-side { max-height: 38vh; }
+  .viewport { min-height: 62vh; }
+  .touch-stick { left: 16px; bottom: 16px; width: 112px; height: 112px; }
+}
+
+/* --- Floor plan zoom controls ------------------------------------------- */
+
+.plan-zoom {
+  position: absolute; right: 10px; bottom: 10px;
+  display: flex; gap: 4px; z-index: 2;
+}
+.plan-zoom .btn { min-width: 30px; justify-content: center; }

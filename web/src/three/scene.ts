@@ -53,6 +53,24 @@ export class SceneManager {
   private disposed = false;
 
   private player = new Player();
+  /**
+   * Touch devices have no pointer lock, so walking is engaged explicitly and
+   * driven by an on-screen stick and a look drag instead.
+   */
+  private readonly touchDevice = (() => {
+    if (typeof window === 'undefined') return false;
+    // `(pointer: coarse)` asks whether the PRIMARY pointer is a finger, which
+    // is the question that matters. Testing maxTouchPoints instead would hand
+    // the thumb stick to anyone on a touchscreen laptop who is using a mouse.
+    const media = window.matchMedia?.('(pointer: coarse)');
+    if (media) return media.matches;
+    return navigator.maxTouchPoints > 0;
+  })();
+  /** Live pointers, so a second finger can hand the gesture to OrbitControls. */
+  private activePointers = new Map<number, { x: number; y: number }>();
+  /** A press that has not yet moved far enough to count as a drag. */
+  private pendingTap: { id: number; furnitureId: string | null; x: number; y: number } | null = null;
+  private lookPointer: number | null = null;
   private lookingAt: string | null = null;
   private lookRay = new THREE.Raycaster();
   private screenCentre = new THREE.Vector2(0, 0);
@@ -91,6 +109,7 @@ export class SceneManager {
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerUp);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
@@ -456,11 +475,20 @@ export class SceneManager {
       // Start standing in the middle of the room, facing the way you were
       // already looking.
       const dir = this.camera.position.clone().sub(this.controls.target);
-      this.player.place(this.roomCentre.x, this.roomCentre.z, Math.atan2(dir.x, dir.z) + Math.PI);
       this.setSelection(null);
+      // Blockers first: place() needs them to find clear floor to stand on.
       this.rebuildBlockers();
+      this.player.place(this.roomCentre.x, this.roomCentre.z, Math.atan2(dir.x, dir.z) + Math.PI);
+      // Touch has no pointer lock to wait for, so walking starts immediately.
+      if (this.touchDevice) {
+        this.player.setActive(true);
+        this.callbacks.onPointerLock?.(true);
+      }
     } else {
       this.exitPointerLock();
+      this.player.setActive(false);
+      this.lookPointer = null;
+      this.callbacks.onPointerLock?.(false);
       this.camera.fov = 55;
       this.camera.updateProjectionMatrix();
       this.camera.rotation.set(0, 0, 0);
@@ -471,6 +499,16 @@ export class SceneManager {
 
   getMode() {
     return this.mode;
+  }
+
+  /** True when this device drives walk mode with touch rather than a mouse. */
+  isTouchDevice() {
+    return this.touchDevice;
+  }
+
+  /** Drive movement from the on-screen stick. Both axes run -1..1. */
+  setStick(x: number, y: number) {
+    this.player.setStick(x, y);
   }
 
   /** Ask the browser for pointer lock. Must be called from a user gesture. */
@@ -521,9 +559,24 @@ export class SceneManager {
   }
 
   private onPointerDown = (event: PointerEvent) => {
+    this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    // A second finger always means a pinch. Abandon whatever the first finger
+    // was doing and give the gesture back to OrbitControls, or pinch-to-zoom
+    // silently does nothing whenever the first finger landed on furniture.
+    if (this.activePointers.size > 1) {
+      this.cancelDrag();
+      if (this.mode === 'orbit') this.controls.enabled = true;
+      return;
+    }
+
     if (this.mode === 'walk') {
-      // Clicking the view is how you take control; the browser requires the
-      // request to come from a gesture like this one.
+      if (this.touchDevice && event.pointerType === 'touch') {
+        // Drag anywhere to look; the stick handles moving.
+        this.lookPointer = event.pointerId;
+        return;
+      }
+      // The browser only grants pointer lock from a gesture like this one.
       if (!this.player.isActive()) this.requestPointerLock();
       return;
     }
@@ -533,31 +586,75 @@ export class SceneManager {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(this.furnitureRoot.children, true);
     const owner = hits.length ? this.ownerOf(hits[0].object) : null;
+    const id = (owner?.userData.furnitureId as string) ?? null;
+
+    if (event.pointerType === 'touch') {
+      // On touch, one finger orbits by default. A piece is picked up only once
+      // it is selected, so dragging across a furnished room still turns the
+      // camera rather than shoving the sofa around.
+      if (id && id === this.selectedId) {
+        this.beginDrag(id, owner!, event);
+        return;
+      }
+      this.pendingTap = { id: event.pointerId, furnitureId: id, x: event.clientX, y: event.clientY };
+      return;
+    }
 
     if (!owner) {
       this.setSelection(null);
       this.callbacks.onSelect?.(null);
       return;
     }
-
-    const id = owner.userData.furnitureId as string;
     this.setSelection(id);
     this.callbacks.onSelect?.(id);
-
-    // Grab from where the pointer met the floor, so the piece does not jump.
-    const groundHit = new THREE.Vector3();
-    if (this.raycaster.ray.intersectPlane(this.floorPlane, groundHit)) {
-      this.dragging = { id, offset: owner.position.clone().sub(groundHit).setY(0) };
-      this.controls.enabled = false;
-      this.canvas.setPointerCapture(event.pointerId);
-    }
+    this.beginDrag(id!, owner, event);
   };
 
+  /** Start moving a piece, grabbing it where the pointer met the floor. */
+  private beginDrag(id: string, owner: THREE.Object3D, event: PointerEvent) {
+    const groundHit = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(this.floorPlane, groundHit)) return;
+    this.dragging = { id, offset: owner.position.clone().sub(groundHit).setY(0) };
+    this.controls.enabled = false;
+    try { this.canvas.setPointerCapture(event.pointerId); } catch { /* already gone */ }
+  }
+
+  private cancelDrag() {
+    if (!this.dragging) return;
+    const group = this.pieces.get(this.dragging.id);
+    if (group) {
+      this.callbacks.onMove?.(this.dragging.id, group.position.x * 100, group.position.z * 100, true);
+    }
+    this.dragging = null;
+    this.pendingTap = null;
+  }
+
   private onPointerMove = (event: PointerEvent) => {
+    const tracked = this.activePointers.get(event.pointerId);
+
     if (this.mode === 'walk') {
+      if (this.lookPointer === event.pointerId && tracked) {
+        // No pointer lock on touch, so look from the change in position.
+        this.player.look(event.clientX - tracked.x, event.clientY - tracked.y, 0.005);
+        tracked.x = event.clientX;
+        tracked.y = event.clientY;
+        return;
+      }
       // Pointer lock delivers relative motion, which is what mouse look needs.
-      if (this.player.isActive()) this.player.look(event.movementX, event.movementY);
+      if (this.player.isActive() && this.lookPointer === null) {
+        this.player.look(event.movementX, event.movementY);
+      }
       return;
+    }
+
+    // A press that travels is a drag of the camera, not a tap on a piece.
+    if (this.pendingTap && this.pendingTap.id === event.pointerId) {
+      const moved = Math.hypot(event.clientX - this.pendingTap.x, event.clientY - this.pendingTap.y);
+      if (moved > 10) this.pendingTap = null;
+    }
+    if (tracked) {
+      tracked.x = event.clientX;
+      tracked.y = event.clientY;
     }
     if (!this.dragging) return;
 
@@ -576,6 +673,17 @@ export class SceneManager {
   };
 
   private onPointerUp = (event: PointerEvent) => {
+    this.activePointers.delete(event.pointerId);
+    if (this.lookPointer === event.pointerId) this.lookPointer = null;
+
+    // A press that never travelled is a tap: it changes the selection.
+    if (this.pendingTap && this.pendingTap.id === event.pointerId) {
+      const { furnitureId } = this.pendingTap;
+      this.pendingTap = null;
+      this.setSelection(furnitureId);
+      this.callbacks.onSelect?.(furnitureId);
+    }
+
     if (!this.dragging) return;
     const group = this.pieces.get(this.dragging.id);
     if (group) this.callbacks.onMove?.(this.dragging.id, group.position.x * 100, group.position.z * 100, true);
@@ -714,11 +822,14 @@ export class SceneManager {
 
   dispose() {
     this.disposed = true;
+    this.player.setStick(0, 0);
     cancelAnimationFrame(this.frame);
     this.exitPointerLock();
+    this.activePointers.clear();
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerUp);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);

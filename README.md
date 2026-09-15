@@ -23,11 +23,28 @@ goes. Everything writes through to one model.
 *Orbit* is the planning view: walls between you and the room are culled as you
 move around it, and you drag furniture along the floor.
 
-*Walk* is the game view. Click in and the pointer locks: mouse to look, WASD to
-move, shift to run, C to crouch, Esc to let go. You collide with the walls and
-the furniture, the ceiling closes over you, your head bobs with your stride,
-and the crosshair names whatever you are standing in front of. Doors and
-windows are real cut-outs you can walk up to and see through.
+*Walk* is the game view. On a desktop, click in and the pointer locks: mouse to
+look, WASD to move, shift to run, C to crouch, Esc to let go. You collide with
+the walls and the furniture, the ceiling closes over you, your head bobs with
+your stride, and the crosshair names whatever you are standing in front of.
+Doors and windows are real cut-outs you can walk up to and see through.
+
+## On a phone or tablet
+
+Everything works by touch, which is worth stating precisely because the two
+modes behave differently.
+
+In *orbit*, one finger turns the room, pinch zooms, and two fingers pan — the
+gestures you would expect from a map. Furniture is tap-to-select, then drag,
+rather than drag-on-contact: in a furnished room almost every pixel has
+something under it, so grabbing on first touch would mean you could never turn
+the camera.
+
+In *walk*, there is no pointer lock on mobile, so the controls are the ones a
+game would use: a thumb stick in the lower-left to move, and a drag anywhere
+else to look. Both at once works. Tap Orbit to come back out.
+
+The floor plan pinches and pans too, with a Fit button to reframe.
 
 **Light.** A time-of-day slider moves the sun through the day, from a low warm
 morning to overhead noon to evening, after which the room is lit only by the

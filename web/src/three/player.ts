@@ -35,6 +35,8 @@ export class Player {
 
   private velocity = new THREE.Vector3();
   private keys = new Set<string>();
+  /** Analogue input from an on-screen stick: x strafes, y walks forward. */
+  private stick = new THREE.Vector2();
   private blockers: Blocker[] = [];
   private bobPhase = 0;
   private eyeHeight = EYE_HEIGHT;
@@ -50,20 +52,48 @@ export class Player {
     this.active = active;
     if (!active) {
       this.keys.clear();
+      this.stick.set(0, 0);
       this.velocity.set(0, 0, 0);
     }
+  }
+
+  /** Feed the on-screen stick. Both components are clamped to -1..1. */
+  setStick(x: number, y: number) {
+    this.stick.set(THREE.MathUtils.clamp(x, -1, 1), THREE.MathUtils.clamp(y, -1, 1));
   }
 
   isActive() {
     return this.active;
   }
 
-  /** Place the player and point them in a direction, in radians. */
+  /**
+   * Place the player and point them in a direction, in radians.
+   *
+   * The requested spot is usually the middle of the room, which in a furnished
+   * room is very often inside the coffee table. Spawning inside a blocker used
+   * to wedge you there permanently, so this spirals outward for clear floor.
+   */
   place(x: number, z: number, yaw: number) {
-    this.position.set(x, this.eyeHeight, z);
     this.yaw = yaw;
     this.pitch = 0;
     this.velocity.set(0, 0, 0);
+    this.position.set(x, this.eyeHeight, z);
+    if (!this.blocked()) return;
+
+    for (let radius = 0.35; radius <= 4; radius += 0.35) {
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2;
+        this.position.set(x + Math.cos(angle) * radius, this.eyeHeight, z + Math.sin(angle) * radius);
+        if (!this.blocked()) return;
+      }
+    }
+    // Nowhere clear found; stand at the requested spot and rely on the
+    // already-stuck escape in moveAxis to walk out.
+    this.position.set(x, this.eyeHeight, z);
+  }
+
+  private blocked(): boolean {
+    return this.blockers.some((b) => this.intersects(b.box));
   }
 
   look(deltaX: number, deltaY: number, sensitivity = 0.0022) {
@@ -98,9 +128,19 @@ export class Player {
     if (this.wants('KeyD', 'ArrowRight')) wish.add(right);
     if (this.wants('KeyA', 'ArrowLeft')) wish.sub(right);
 
+    // The stick adds to the keys rather than replacing them, so a tablet with
+    // a keyboard attached can use either.
+    const stickLength = this.stick.length();
+    if (stickLength > 0.04) {
+      wish.addScaledVector(forward, this.stick.y);
+      wish.addScaledVector(right, this.stick.x);
+    }
+
     const speed = this.crouching ? CROUCH_SPEED : sprinting ? SPRINT_SPEED : WALK_SPEED;
     if (wish.lengthSq() > 0) {
-      wish.normalize().multiplyScalar(speed);
+      // A half-pushed stick walks at half speed; keys are always full tilt.
+      const throttle = this.keys.size ? 1 : Math.min(1, Math.max(stickLength, 0.001));
+      wish.normalize().multiplyScalar(speed * throttle);
       this.velocity.lerp(wish, Math.min(1, ACCEL * delta));
     } else {
       this.velocity.multiplyScalar(Math.max(0, 1 - DAMPING * delta));
@@ -137,9 +177,18 @@ export class Player {
   /** Move along one axis and undo it if the player would end up inside a box. */
   private moveAxis(axis: 'x' | 'z', amount: number) {
     if (amount === 0) return;
+
+    // Anything we are already inside cannot be allowed to block us, or being
+    // spawned in the coffee table means never moving again.
+    const alreadyInside = new Set<Blocker>();
+    for (const blocker of this.blockers) {
+      if (this.intersects(blocker.box)) alreadyInside.add(blocker);
+    }
+
     const before = this.position[axis];
     this.position[axis] += amount;
     for (const blocker of this.blockers) {
+      if (alreadyInside.has(blocker)) continue;
       if (this.intersects(blocker.box)) {
         this.position[axis] = before;
         this.velocity[axis] = 0;

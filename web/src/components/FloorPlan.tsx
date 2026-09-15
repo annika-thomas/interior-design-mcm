@@ -12,6 +12,13 @@ interface Props {
   onMoveOpening: (id: string, offsetCm: number, commit: boolean) => void;
 }
 
+/** Pan and magnification applied on top of the fit-to-canvas transform. */
+interface View { zoom: number; panX: number; panY: number }
+
+const FIT: View = { zoom: 1, panX: 0, panY: 0 };
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 8;
+
 type Drag =
   | { kind: 'furniture'; id: string; grabX: number; grabY: number }
   | { kind: 'rotate'; id: string; centerX: number; centerY: number }
@@ -46,6 +53,10 @@ export function FloorPlan(props: Props) {
   const [size, setSize] = useState({ width: 800, height: 520 });
   const dragRef = useRef<Drag | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [view, setView] = useState<View>(FIT);
+  /** Live pointers, so two fingers can pinch instead of dragging a sofa. */
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; anchor: Point; zoom: number } | null>(null);
 
   // Keep the canvas matched to its container so the plan never stretches.
   useEffect(() => {
@@ -59,23 +70,49 @@ export function FloorPlan(props: Props) {
     return () => observer.disconnect();
   }, []);
 
-  /** Centimetres to canvas pixels, fitted with padding. */
-  const transform = useCallback(() => {
+  /**
+   * Centimetres to canvas pixels: fit the room to the canvas, then apply the
+   * user's zoom and pan on top. Keeping the fit as the base means the plan
+   * always opens framed, and resetting is just dropping back to zoom 1.
+   */
+  const transform = useCallback((override?: View) => {
+    const v = override ?? view;
     const xs = room.polygon.map((p) => p.x);
     const ys = room.polygon.map((p) => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     const spanX = Math.max(maxX - minX, 50);
     const spanY = Math.max(maxY - minY, 50);
-    const scale = Math.min((size.width - PAD * 2) / spanX, (size.height - PAD * 2) / spanY);
-    const offsetX = (size.width - spanX * scale) / 2 - minX * scale;
-    const offsetY = (size.height - spanY * scale) / 2 - minY * scale;
+    const baseScale = Math.min((size.width - PAD * 2) / spanX, (size.height - PAD * 2) / spanY);
+    const scale = baseScale * v.zoom;
+    const offsetX = (size.width - spanX * scale) / 2 - minX * scale + v.panX;
+    const offsetY = (size.height - spanY * scale) / 2 - minY * scale + v.panY;
     return {
       scale,
       toPx: (p: Point) => ({ x: p.x * scale + offsetX, y: p.y * scale + offsetY }),
       toCm: (x: number, y: number) => ({ x: (x - offsetX) / scale, y: (y - offsetY) / scale }),
+      /** Where a world point would land at this zoom with no pan applied. */
+      unpanned: (p: Point, zoom: number) => {
+        const s2 = baseScale * zoom;
+        return {
+          x: p.x * s2 + (size.width - spanX * s2) / 2 - minX * s2,
+          y: p.y * s2 + (size.height - spanY * s2) / 2 - minY * s2,
+        };
+      },
     };
-  }, [room.polygon, size]);
+  }, [room.polygon, size, view]);
+
+  /** Zoom about a fixed screen point, so it magnifies what is under it. */
+  const zoomAbout = useCallback((screenX: number, screenY: number, factor: number) => {
+    setView((prev) => {
+      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prev.zoom * factor));
+      if (zoom === prev.zoom) return prev;
+      const tf = transform(prev);
+      const anchor = tf.toCm(screenX, screenY);
+      const target = tf.unpanned(anchor, zoom);
+      return { zoom, panX: screenX - target.x, panY: screenY - target.y };
+    });
+  }, [transform]);
 
   /** Corners of a piece in plan space, honouring its rotation. */
   const corners = (f: Furniture): Point[] => {
@@ -263,7 +300,7 @@ export function FloorPlan(props: Props) {
       ctx.fillStyle = '#FBF9F4'; ctx.fill();
       ctx.strokeStyle = COLORS.wall; ctx.lineWidth = 2; ctx.stroke();
     }
-  }, [room, catalog, selectedId, size, hover, transform]);
+  }, [room, catalog, selectedId, size, hover, transform, view]);
 
   // --- Interaction --------------------------------------------------------
 
@@ -306,19 +343,54 @@ export function FloorPlan(props: Props) {
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
+    pointers.current.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top });
+
+    // Two fingers is always a pinch. Drop whatever the first one was moving,
+    // or pinching over a sofa would drag the sofa instead of zooming.
+    if (pointers.current.size === 2) {
+      dragRef.current = null;
+      const [a, b] = [...pointers.current.values()];
+      pinch.current = {
+        dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+        anchor: transform().toCm((a.x + b.x) / 2, (a.y + b.y) / 2),
+        zoom: view.zoom,
+      };
+      return;
+    }
+    if (pointers.current.size > 2) return;
+
     const { toCm } = transform();
     const { x, y } = toCm(event.clientX - rect.left, event.clientY - rect.top);
     const hit = hitTest(x, y);
     dragRef.current = hit;
     if (hit?.kind === 'furniture' || hit?.kind === 'rotate') props.onSelect(hit.id);
     else if (!hit) props.onSelect(null);
-    if (hit) event.currentTarget.setPointerCapture(event.pointerId);
+    if (hit) {
+      try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
+    }
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
+    const local = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    if (pointers.current.has(event.pointerId)) pointers.current.set(event.pointerId, local);
+
+    // Pinch to zoom, and move both fingers together to pan.
+    if (pointers.current.size === 2 && pinch.current) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const start = pinch.current;
+      setView(() => {
+        const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, start.zoom * (dist / start.dist)));
+        const target = transform({ zoom, panX: 0, panY: 0 }).unpanned(start.anchor, zoom);
+        return { zoom, panX: mid.x - target.x, panY: mid.y - target.y };
+      });
+      return;
+    }
+
     const { toCm } = transform();
-    const { x, y } = toCm(event.clientX - rect.left, event.clientY - rect.top);
+    const { x, y } = toCm(local.x, local.y);
     const drag = dragRef.current;
 
     if (!drag) {
@@ -351,6 +423,9 @@ export function FloorPlan(props: Props) {
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    pointers.current.delete(event.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+
     const drag = dragRef.current;
     dragRef.current = null;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* not captured */ }
@@ -371,8 +446,10 @@ export function FloorPlan(props: Props) {
     }
   };
 
+  const zoomed = Math.abs(view.zoom - 1) > 0.01 || view.panX !== 0 || view.panY !== 0;
+
   return (
-    <div ref={wrapRef} style={{ width: '100%', height: '100%', minHeight: 360 }}>
+    <div ref={wrapRef} style={{ width: '100%', height: '100%', minHeight: 360, position: 'relative' }}>
       <canvas
         ref={canvasRef}
         className="plan-canvas"
@@ -381,7 +458,16 @@ export function FloorPlan(props: Props) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onWheel={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          zoomAbout(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+        }}
       />
+      <div className="plan-zoom">
+        <button className="btn sm" onClick={() => zoomAbout(size.width / 2, size.height / 2, 1.3)} aria-label="Zoom in">+</button>
+        <button className="btn sm" onClick={() => zoomAbout(size.width / 2, size.height / 2, 1 / 1.3)} aria-label="Zoom out">−</button>
+        {zoomed && <button className="btn sm" onClick={() => setView(FIT)}>Fit</button>}
+      </div>
     </div>
   );
 }

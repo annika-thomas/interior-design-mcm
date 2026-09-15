@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogItem, Room } from '../types';
 import { SceneManager, type ViewMode } from '../three/scene';
+import { TouchStick } from './TouchStick';
 
 interface Props {
   room: Room;
@@ -30,6 +31,7 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
   const [lookingAt, setLookingAt] = useState<string | null>(null);
   const [hour, setHour] = useState(15);
   const [exporting, setExporting] = useState(false);
+  const [touch, setTouch] = useState(false);
 
   // Callbacks change identity every render; a ref keeps the scene's handlers
   // current without tearing down and rebuilding the whole scene.
@@ -46,6 +48,7 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
       onPointerLock: setLocked,
     });
     sceneRef.current = scene;
+    setTouch(scene.isTouchDevice());
 
     const observer = new ResizeObserver(([entry]) => {
       scene.resize(entry.contentRect.width, entry.contentRect.height);
@@ -156,24 +159,40 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
           <div className="crosshair" aria-hidden />
           {lookLabel && <div className="look-label">{lookLabel}</div>}
           <div className="walk-keys">
-            <span><kbd>WASD</kbd> move</span>
-            <span><kbd>Shift</kbd> run</span>
-            <span><kbd>C</kbd> crouch</span>
-            <span><kbd>Esc</kbd> release</span>
+            {touch ? (
+              <>
+                <span>Stick to move</span>
+                <span>Drag to look</span>
+                <span>Orbit to exit</span>
+              </>
+            ) : (
+              <>
+                <span><kbd>WASD</kbd> move</span>
+                <span><kbd>Shift</kbd> run</span>
+                <span><kbd>C</kbd> crouch</span>
+                <span><kbd>Esc</kbd> release</span>
+              </>
+            )}
           </div>
         </>
       )}
 
-      {mode === 'walk' && !locked && (
+      {mode === 'walk' && !locked && !touch && (
         <button className="walk-prompt" onClick={() => sceneRef.current?.requestPointerLock()}>
           <strong>Click to walk around</strong>
           <span>Mouse to look · W A S D to move · Shift to run · Esc to let go</span>
         </button>
       )}
 
+      {mode === 'walk' && touch && (
+        <TouchStick onChange={(x, y) => sceneRef.current?.setStick(x, y)} />
+      )}
+
       {mode === 'orbit' && (
         <div className="viewport-hint">
-          Drag to orbit, scroll to zoom. Click a piece to select it, then drag to slide it along the floor.
+          {touch
+            ? 'One finger to turn the room, pinch to zoom, two fingers to pan. Tap a piece to select it, then drag it along the floor.'
+            : 'Drag to orbit, scroll to zoom. Click a piece to select it, then drag to slide it along the floor.'}
         </div>
       )}
     </div>
