@@ -26,7 +26,7 @@ and windows are real cut-outs you can see through.
 product links, notes. Each item gets read for what is specifically reusable
 about it and scored on how squarely it sits in the period.
 
-**Design.** A rule engine scores the room against fourteen checkable
+**Design.** A rule engine scores the room against fifteen checkable
 mid-century rules and turns what it finds into an ordered plan, working out
 where each suggested piece physically fits. Anything that matches something in
 your library is attributed to it, so the plan is built from things you have
@@ -59,7 +59,7 @@ estimate, not the parametric model.
 
 ## Furniture
 
-The catalog is 44 pieces, each with real dimensions and no downloaded assets.
+The catalog is 45 pieces, each with real dimensions and no downloaded assets.
 Every piece is generated procedurally in the browser from a shape descriptor,
 which means the repo stays small, you can resize anything to match a product
 you actually found, and it still exports as clean glTF. The silhouettes are
