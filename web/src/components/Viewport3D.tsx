@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogItem, Room } from '../types';
 import { SceneManager, type ViewMode } from '../three/scene';
 
@@ -9,6 +9,10 @@ interface Props {
   onSelect: (id: string | null) => void;
   onMove: (id: string, xCm: number, yCm: number, commit: boolean) => void;
 }
+
+const HOURS = [
+  [7, 'Early'], [10, 'Morning'], [13, 'Midday'], [16, 'Afternoon'], [19, 'Golden'], [22, 'Night'],
+] as const;
 
 /**
  * The 3D view.
@@ -22,6 +26,9 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
   const wrapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneManager | null>(null);
   const [mode, setMode] = useState<ViewMode>('orbit');
+  const [locked, setLocked] = useState(false);
+  const [lookingAt, setLookingAt] = useState<string | null>(null);
+  const [hour, setHour] = useState(15);
   const [exporting, setExporting] = useState(false);
 
   // Callbacks change identity every render; a ref keeps the scene's handlers
@@ -35,6 +42,8 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
     const scene = new SceneManager(canvas, {
       onSelect: (id) => handlers.current.onSelect(id),
       onMove: (id, x, y, commit) => handlers.current.onMove(id, x, y, commit),
+      onLookAt: setLookingAt,
+      onPointerLock: setLocked,
     });
     sceneRef.current = scene;
 
@@ -73,6 +82,17 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
     sceneRef.current?.setSelection(selectedId);
   }, [selectedId]);
 
+  useEffect(() => {
+    sceneRef.current?.setTimeOfDay(hour);
+  }, [hour]);
+
+  const lookLabel = useMemo(() => {
+    if (!lookingAt) return null;
+    const piece = (room.furniture ?? []).find((f) => f.id === lookingAt);
+    if (!piece) return null;
+    return `${piece.label} — ${Math.round(piece.widthCm)}×${Math.round(piece.depthCm)}×${Math.round(piece.heightCm)} cm`;
+  }, [lookingAt, room.furniture]);
+
   const switchMode = (next: ViewMode) => {
     setMode(next);
     sceneRef.current?.setMode(next);
@@ -98,19 +118,72 @@ export function Viewport3D({ room, catalog, selectedId, onSelect, onMove }: Prop
   return (
     <div ref={wrapRef} className="viewport">
       <canvas ref={canvasRef} />
-      <div className="viewport-overlay">
-        <button className={`btn sm${mode === 'orbit' ? ' primary' : ''}`} onClick={() => switchMode('orbit')}>Orbit</button>
-        <button className={`btn sm${mode === 'walk' ? ' primary' : ''}`} onClick={() => switchMode('walk')}>Walk through</button>
-        <button className="btn sm" onClick={() => sceneRef.current?.frameRoom(room)}>Reframe</button>
-        <button className="btn sm" onClick={exportGLB} disabled={exporting}>
-          {exporting ? 'Exporting…' : 'Export .glb'}
+
+      {/* Controls hide while you are walking, so the view is unobstructed. */}
+      {!locked && (
+        <div className="viewport-overlay">
+          <button className={`btn sm${mode === 'orbit' ? ' primary' : ''}`} onClick={() => switchMode('orbit')}>Orbit</button>
+          <button className={`btn sm${mode === 'walk' ? ' primary' : ''}`} onClick={() => switchMode('walk')}>Walk through</button>
+          {mode === 'orbit' && <button className="btn sm" onClick={() => sceneRef.current?.frameRoom(room)}>Reframe</button>}
+          <button className="btn sm" onClick={exportGLB} disabled={exporting}>
+            {exporting ? 'Exporting…' : 'Export .glb'}
+          </button>
+        </div>
+      )}
+
+      {!locked && (
+        <div className="time-control">
+          <label htmlFor="tod">
+            Light <strong>{formatHour(hour)}</strong>
+          </label>
+          <input
+            id="tod" type="range" min={6} max={23} step={0.5} value={hour}
+            onChange={(e) => setHour(Number(e.target.value))}
+          />
+          <div className="time-presets">
+            {HOURS.map(([h, label]) => (
+              <button key={label} className="tag" aria-pressed={Math.abs(hour - h) < 0.6} onClick={() => setHour(h)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* The crosshair only appears once you actually have control. */}
+      {mode === 'walk' && locked && (
+        <>
+          <div className="crosshair" aria-hidden />
+          {lookLabel && <div className="look-label">{lookLabel}</div>}
+          <div className="walk-keys">
+            <span><kbd>WASD</kbd> move</span>
+            <span><kbd>Shift</kbd> run</span>
+            <span><kbd>C</kbd> crouch</span>
+            <span><kbd>Esc</kbd> release</span>
+          </div>
+        </>
+      )}
+
+      {mode === 'walk' && !locked && (
+        <button className="walk-prompt" onClick={() => sceneRef.current?.requestPointerLock()}>
+          <strong>Click to walk around</strong>
+          <span>Mouse to look · W A S D to move · Shift to run · Esc to let go</span>
         </button>
-      </div>
-      <div className="viewport-hint">
-        {mode === 'orbit'
-          ? 'Drag to orbit, scroll to zoom. Click a piece to select it, then drag to slide it along the floor.'
-          : 'Eye level, 1.62 m. W A S D or arrows to move, shift to go faster, drag to look around.'}
-      </div>
+      )}
+
+      {mode === 'orbit' && (
+        <div className="viewport-hint">
+          Drag to orbit, scroll to zoom. Click a piece to select it, then drag to slide it along the floor.
+        </div>
+      )}
     </div>
   );
+}
+
+function formatHour(hour: number): string {
+  const h = Math.floor(hour);
+  const m = hour % 1 >= 0.5 ? '30' : '00';
+  const suffix = h >= 12 ? 'pm' : 'am';
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return `${display}:${m} ${suffix}`;
 }

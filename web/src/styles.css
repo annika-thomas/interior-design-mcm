@@ -258,6 +258,9 @@ input[type='range'] { width: 100%; accent-color: var(--walnut); }
 .viewport-overlay {
   position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap;
   max-width: calc(100% - 24px);
+  /* Above the click-to-walk overlay: it covers the whole viewport, and without
+     this it swallowed the button you need to get back out of walk mode. */
+  z-index: 6;
 }
 .viewport-hint {
   position: absolute; bottom: 12px; left: 12px;
@@ -312,4 +315,73 @@ input[type='range'] { width: 100%; accent-color: var(--walnut); }
   .split { flex-direction: column; }
   .split .pane-side { flex: 0 0 auto; border-left: 0; border-top: 1px solid var(--line); max-height: 44vh; }
   .main-inner { padding: 16px; }
+}
+
+/* --- Walk-through mode -------------------------------------------------- */
+
+.crosshair {
+  position: absolute; left: 50%; top: 50%; width: 16px; height: 16px;
+  transform: translate(-50%, -50%); pointer-events: none; z-index: 4;
+}
+.crosshair::before, .crosshair::after {
+  content: ''; position: absolute; background: rgba(255, 255, 255, .85);
+  box-shadow: 0 0 2px rgba(0, 0, 0, .6);
+}
+.crosshair::before { left: 50%; top: 0; width: 1.5px; height: 100%; transform: translateX(-50%); }
+.crosshair::after { top: 50%; left: 0; height: 1.5px; width: 100%; transform: translateY(-50%); }
+
+.look-label {
+  position: absolute; left: 50%; top: calc(50% + 26px); transform: translateX(-50%);
+  background: rgba(20, 18, 16, .78); color: #F7F4EF;
+  padding: 5px 12px; border-radius: 999px; font-size: 12px;
+  pointer-events: none; z-index: 4; white-space: nowrap;
+  backdrop-filter: blur(3px);
+}
+
+.walk-keys {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; white-space: nowrap;
+  max-width: calc(100% - 24px); overflow: hidden;
+  background: rgba(20, 18, 16, .6); color: #E8E2D6;
+  padding: 6px 13px; border-radius: 999px; font-size: 11px;
+  pointer-events: none; z-index: 4; backdrop-filter: blur(3px);
+}
+.walk-keys span { display: inline-flex; align-items: center; gap: 5px; }
+.walk-keys kbd {
+  background: rgba(255, 255, 255, .16); border-radius: 4px;
+  padding: 1px 6px; font-family: var(--mono); font-size: 10px;
+}
+
+.walk-prompt {
+  position: absolute; inset: 0; z-index: 5; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+  border: 0; background: rgba(28, 25, 22, .3); color: #FBF9F4;
+  backdrop-filter: blur(1.5px); transition: background .15s;
+}
+.walk-prompt:hover { background: rgba(28, 25, 22, .42); }
+.walk-prompt strong {
+  font-size: 17px; letter-spacing: -.01em;
+  background: rgba(20, 18, 16, .66); padding: 9px 20px; border-radius: 999px;
+}
+.walk-prompt span { font-size: 12px; opacity: .88; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+
+.time-control {
+  position: absolute; right: 12px; top: 12px; z-index: 6;
+  width: 210px; padding: 10px 12px;
+  background: rgba(251, 249, 244, .93); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.time-control > label {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-3); font-weight: 600; margin-bottom: 5px;
+}
+.time-control > label strong {
+  text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink);
+}
+.time-presets { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 7px; }
+.time-presets .tag { font-size: 10px; padding: 1px 6px; }
+
+@media (max-width: 900px) {
+  .time-control { position: static; width: auto; margin: 10px; }
 }

@@ -18,9 +18,22 @@ assessment of the furniture you already own.
 tape measure, slide a window along its wall, push the sofa where it really
 goes. Everything writes through to one model.
 
-**3D.** The plan extrudes into a room you can orbit around or walk through at
-eye level. Walls between you and the room are culled as you orbit, and doors
-and windows are real cut-outs you can see through.
+**3D.** The plan extrudes into a room with two ways to look at it.
+
+*Orbit* is the planning view: walls between you and the room are culled as you
+move around it, and you drag furniture along the floor.
+
+*Walk* is the game view. Click in and the pointer locks: mouse to look, WASD to
+move, shift to run, C to crouch, Esc to let go. You collide with the walls and
+the furniture, the ceiling closes over you, your head bobs with your stride,
+and the crosshair names whatever you are standing in front of. Doors and
+windows are real cut-outs you can walk up to and see through.
+
+**Light.** A time-of-day slider moves the sun through the day, from a low warm
+morning to overhead noon to evening, after which the room is lit only by the
+lamps you have placed. This is more than atmosphere: a palette that sings at
+3pm can go grey by evening, and a north-facing room never gets direct sun at
+all. Scrubbing the day is how you find that out before you buy the paint.
 
 **Library.** Everything you have been collecting — screenshots, video clips,
 product links, notes. Each item gets read for what is specifically reusable
@@ -66,6 +79,12 @@ you actually found, and it still exports as clean glTF. The silhouettes are
 what matter: low seat heights, tapered legs, and a visible gap of floor
 underneath are the things that make a room read as mid-century, and those are
 modelled faithfully.
+
+Surfaces are procedural too — wood grain, woven tweed, bouclé, brushed brass,
+travertine, cane and floorboards are all painted onto a canvas at load time and
+turned into matching normal maps, so things catch light instead of reading as
+flat colour. No texture files, and every material still takes the exact hex the
+catalog asks for.
 
 ## Running it
 
@@ -116,7 +135,9 @@ server/
 web/
   src/three/
     furniture.ts    procedural mid-century geometry
-    scene.ts        room shell, wall culling, drag, walk mode, glTF export
+    textures.ts     canvas-painted surfaces and derived normal maps
+    player.ts       first-person controller: look, move, collide
+    scene.ts        room shell, sun, wall culling, drag, walk mode, export
   src/components/
     FloorPlan.tsx   the 2D editor
   src/pages/        Survey, Plan, 3D, Library, Design
